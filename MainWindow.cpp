@@ -98,6 +98,13 @@ void MainWindow::on_copy_clicked() try {
 
 	/*执行拷贝*/
 	fs::path varTargetDirPath;
+	class Pack {
+	public:
+		fs::path source;
+		fs::path target;
+		std::string error_string;
+	};
+	std::vector< std::shared_ptr<Pack> > dutys_pack;
 	std::vector< std::function<void(void)> > dutys;
 	dutys.reserve(varPaths.size());
 	{
@@ -105,25 +112,77 @@ void MainWindow::on_copy_clicked() try {
 		varTargetDirPath =
 			fs::u8path(varRootDirPathQ.absolutePath().toUtf8().toStdString());
 		for (const auto & varI : varPaths) {
-			dutys.emplace_back([source = std::get<1>(varI),
-				target = varTargetDirPath / std::get<0>(varI)
-			]() { try {
+			std::shared_ptr<Pack> varPackD = dutys_pack.emplace_back(new Pack);
+			varPackD->source = std::get<1>(varI);
+			varPackD->target = varTargetDirPath / std::get<0>(varI);
+			dutys.emplace_back([varPackD]() { try {
+				const auto & target = varPackD->target;
+				const auto & source = varPackD->source;
 				std::error_code e;
-				fs::create_directories(target.parent_path(), e);
-				fs::copy(source, target, fs::copy_options::overwrite_existing, e);
+				fs::create_directories(target.parent_path(), e)/*ignore the error*/;
+				fs::copy(source, target, fs::copy_options::overwrite_existing);
 			}
-			catch (...) {}}
+			catch (const std::exception &e) {
+				varPackD->error_string = e.what();
+			}
+			catch (...) { varPackD->error_string = "unknow error"; }}
 			);
 		}
 	}
 	/************************************/
 	//give warning here 
-
+	{
+		int count = 0;
+		QString varAboutToCopy;
+		for ( const auto & varI : dutys_pack ) {
+			varAboutToCopy += QString::fromUtf16(varI->source.u16string().c_str());
+			varAboutToCopy += QStringLiteral( R"(
+F&T:
+)" );
+			varAboutToCopy += QString::fromUtf16(varI->target.u16string().c_str());
+			varAboutToCopy += QStringLiteral(R"(
+)");
+			if ((++count) > 6/*最大预览数量*/) { break; }
+		}
+		if(QMessageBox::Ok!= QMessageBox::warning(nullptr, 
+			QStringLiteral("确认执行?"), 
+			varAboutToCopy,
+			QMessageBox::Ok,
+			QMessageBox::Ignore))
+			return;
+	}
 	/************************************/
 	varPaths.clear();
 	std::for_each(std::execution::par_unseq,
 		dutys.begin(), dutys.end(),
 		[](const auto & f) {f(); });
+	/*show log**************************/
+	{
+
+		QString varAboutToCopy;
+		for (const auto & varI : dutys_pack) {
+			varAboutToCopy += QStringLiteral(R"(复制日志:-----------------------
+从:)");
+			varAboutToCopy += QString::fromUtf16(varI->source.u16string().c_str());
+			varAboutToCopy += QStringLiteral(R"(
+到:)");
+			varAboutToCopy += QString::fromUtf16(varI->target.u16string().c_str());
+			varAboutToCopy += QStringLiteral(R"(
+错误内容:)");
+			varAboutToCopy += QString::fromLocal8Bit( varI->error_string.size()?
+				varI->error_string.c_str():"Ok");
+			varAboutToCopy += QStringLiteral(R"(
+)");
+		}
+		varAboutToCopy += QStringLiteral(R"(Raw文件列表:
+)");
+		for (const auto & varI : dutys_pack) {
+			varAboutToCopy += QString::fromUtf16( varI->target.filename().u16string().c_str() );
+			varAboutToCopy += QStringLiteral(R"(
+)");
+		}
+		ui->errorShow->setPlainText(varAboutToCopy);
+	}
 }
 catch (const std::exception & e) {
 	ui->errorShow->setPlainText(QString::fromLocal8Bit(e.what()));
